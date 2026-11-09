@@ -248,7 +248,7 @@ func (s *AuthService) Login(
 		return "", "", nil, ErrInvalidCredentials
 	}
 
-	if user.EmailVerifiedAt == nil {
+	if RequireEmailVerification() && user.EmailVerifiedAt == nil {
 		return "", "", nil, ErrEmailNotVerified
 	}
 
@@ -966,4 +966,15 @@ func deviceIPAddress(device *DeviceInput) string {
 		return ""
 	}
 	return device.IPAddress
+}
+
+// RequireEmailVerification defaults to true. Set REQUIRE_EMAIL_VERIFICATION=false to allow login without verifying email.
+func RequireEmailVerification() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("REQUIRE_EMAIL_VERIFICATION")))
+	switch raw {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }

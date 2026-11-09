@@ -43,6 +43,11 @@ func main() {
 	defer db.Close()
 
 	log.Println("PostgreSQL connected successfully!")
+	if service.RequireEmailVerification() {
+		log.Println("Email verification before login is required")
+	} else {
+		log.Println("Email verification before login is DISABLED (REQUIRE_EMAIL_VERIFICATION)")
+	}
 
 	// Initialize Gin
 	router := gin.Default()
