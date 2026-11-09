@@ -154,8 +154,8 @@ func envInt(key string, fallback int) int {
 
 func GlobalRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		PerMin: envFloat("RATE_LIMIT_PER_MIN", 300),
-		Burst:  envInt("RATE_LIMIT_BURST", 80),
+		PerMin:       envFloat("RATE_LIMIT_PER_MIN", 300),
+		Burst:        envInt("RATE_LIMIT_BURST", 80),
 		SkipPrefixes: []string{"/api/health"},
 	}
 }

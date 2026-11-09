@@ -124,6 +124,9 @@ func (s *AuthService) AdminCreateUser(ctx context.Context, input AdminUserInput)
 	if err := s.UserRepo.Create(ctx, user); err != nil {
 		return nil, mapUniqueViolation(err)
 	}
+	if err := s.ensureSubscription(ctx, user.ID.String()); err != nil {
+		return nil, err
+	}
 
 	return s.AdminGetUser(ctx, user.ID.String())
 }

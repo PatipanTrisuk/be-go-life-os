@@ -30,33 +30,42 @@ var (
 )
 
 var (
-	ErrInvalidCredentials      = errors.New("invalid email or password")
-	ErrAccountLocked           = errors.New("account temporarily locked")
-	ErrEmailNotVerified        = errors.New("email not verified")
-	ErrEmailAlreadyVerified    = errors.New("email already verified")
-	ErrInvalidVerifyToken      = errors.New("invalid or expired verification token")
-	ErrJWTSecretMissing        = errors.New("JWT secret is missing")
-	ErrUserNotFound            = errors.New("user not found")
-	ErrInvalidResetToken       = errors.New("invalid or expired reset token")
-	ErrWrongPassword           = errors.New("current password is incorrect")
-	ErrPasswordNotSet          = errors.New("password not set for this account")
-	ErrDeviceNotFound          = errors.New("device not found")
-	ErrRefreshTokenReuse       = errors.New("refresh token reuse detected")
-	ErrDiscordNotConfigured    = oauth.ErrDiscordNotConfigured
-	ErrDiscordEmailMissing     = oauth.ErrDiscordEmailMissing
-	ErrDiscordAuthFailed       = errors.New("discord authentication failed")
+	ErrInvalidCredentials   = errors.New("invalid email or password")
+	ErrAccountLocked        = errors.New("account temporarily locked")
+	ErrEmailNotVerified     = errors.New("email not verified")
+	ErrEmailAlreadyVerified = errors.New("email already verified")
+	ErrInvalidVerifyToken   = errors.New("invalid or expired verification token")
+	ErrJWTSecretMissing     = errors.New("JWT secret is missing")
+	ErrUserNotFound         = errors.New("user not found")
+	ErrInvalidResetToken    = errors.New("invalid or expired reset token")
+	ErrWrongPassword        = errors.New("current password is incorrect")
+	ErrPasswordNotSet       = errors.New("password not set for this account")
+	ErrDeviceNotFound       = errors.New("device not found")
+	ErrRefreshTokenReuse    = errors.New("refresh token reuse detected")
+	ErrDiscordNotConfigured = oauth.ErrDiscordNotConfigured
+	ErrDiscordEmailMissing  = oauth.ErrDiscordEmailMissing
+	ErrDiscordAuthFailed    = errors.New("discord authentication failed")
 )
 
 type AuthService struct {
-	UserRepo                 *repository.UserRepository
-	RefreshTokenRepo         *repository.RefreshTokenRepository
-	DeviceRepo               *repository.DeviceRepository
-	LoginAttemptRepo         *repository.LoginAttemptRepository
-	PasswordResetRepo        *repository.PasswordResetRepository
-	EmailVerificationRepo    *repository.EmailVerificationRepository
-	Mailer                   AuthMailer
-	FrontendURL              string
-	Discord                  *oauth.DiscordClient
+	UserRepo              *repository.UserRepository
+	RefreshTokenRepo      *repository.RefreshTokenRepository
+	DeviceRepo            *repository.DeviceRepository
+	LoginAttemptRepo      *repository.LoginAttemptRepository
+	PasswordResetRepo     *repository.PasswordResetRepository
+	EmailVerificationRepo *repository.EmailVerificationRepository
+	Mailer                AuthMailer
+	FrontendURL           string
+	Discord               *oauth.DiscordClient
+	BillingRepo           *repository.BillingRepository
+}
+
+// ensureSubscription creates a free subscription for a newly created user.
+func (s *AuthService) ensureSubscription(ctx context.Context, userID string) error {
+	if s.BillingRepo == nil {
+		return nil
+	}
+	return s.BillingRepo.EnsureFreeSubscription(ctx, userID)
 }
 
 type AuthMailer interface {
@@ -80,6 +89,7 @@ func NewAuthService(
 	mailer AuthMailer,
 	frontendURL string,
 	discord *oauth.DiscordClient,
+	billingRepo *repository.BillingRepository,
 ) *AuthService {
 	frontendURL = strings.TrimRight(strings.TrimSpace(frontendURL), "/")
 	if frontendURL == "" {
@@ -96,6 +106,7 @@ func NewAuthService(
 		Mailer:                mailer,
 		FrontendURL:           frontendURL,
 		Discord:               discord,
+		BillingRepo:           billingRepo,
 	}
 }
 
@@ -167,6 +178,10 @@ func (s *AuthService) Register(
 		return nil, err
 	}
 
+	if err := s.ensureSubscription(ctx, user.ID.String()); err != nil {
+		return nil, err
+	}
+
 	return user, nil
 }
 
@@ -233,7 +248,7 @@ func (s *AuthService) Login(
 		return "", "", nil, ErrInvalidCredentials
 	}
 
-	if user.EmailVerifiedAt == nil {
+	if RequireEmailVerification() && user.EmailVerifiedAt == nil {
 		return "", "", nil, ErrEmailNotVerified
 	}
 
@@ -354,6 +369,9 @@ func (s *AuthService) LoginWithDiscord(
 					}
 				}
 				return "", "", nil, createErr
+			}
+			if subErr := s.ensureSubscription(ctx, user.ID.String()); subErr != nil {
+				return "", "", nil, subErr
 			}
 		default:
 			return "", "", nil, err
@@ -948,4 +966,15 @@ func deviceIPAddress(device *DeviceInput) string {
 		return ""
 	}
 	return device.IPAddress
+}
+
+// RequireEmailVerification defaults to true. Set REQUIRE_EMAIL_VERIFICATION=false to allow login without verifying email.
+func RequireEmailVerification() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("REQUIRE_EMAIL_VERIFICATION")))
+	switch raw {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }

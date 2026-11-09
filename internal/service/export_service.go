@@ -39,11 +39,11 @@ type ExportFilters struct {
 }
 
 type ExportService struct {
-	ExportJobRepo     *repository.ExportJobRepository
-	UserRepo          *repository.UserRepository
-	NotificationSvc   *NotificationService
-	queue             chan string
-	exportDir         string
+	ExportJobRepo   *repository.ExportJobRepository
+	UserRepo        *repository.UserRepository
+	NotificationSvc *NotificationService
+	queue           chan string
+	exportDir       string
 }
 
 func NewExportService(
@@ -277,8 +277,8 @@ func (s *ExportService) failJob(ctx context.Context, job *models.ExportJob, mess
 		log.Printf("export mark failed id=%s: %v", job.ID.String(), err)
 	}
 	s.pushNotification(ctx, job.UserID.String(), models.NotificationTypeExportFailed, job.ID, map[string]any{
-		"export_type":    job.Type,
-		"error_message":  message,
+		"export_type":   job.Type,
+		"error_message": message,
 	})
 }
 

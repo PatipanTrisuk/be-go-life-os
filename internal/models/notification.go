@@ -7,10 +7,12 @@ import (
 )
 
 const (
-	NotificationTypeExportQueued  = "export_queued"
-	NotificationTypeExportReady   = "export_ready"
-	NotificationTypeExportFailed  = "export_failed"
-	NotificationRefExportJob      = "export_job"
+	NotificationTypeExportQueued = "export_queued"
+	NotificationTypeExportReady  = "export_ready"
+	NotificationTypeExportFailed = "export_failed"
+	NotificationTypeReminderDue  = "reminder_due"
+	NotificationRefExportJob     = "export_job"
+	NotificationRefReminder      = "reminder"
 )
 
 type Notification struct {

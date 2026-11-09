@@ -48,6 +48,7 @@ func scanUser(
 	dest = append(dest,
 		&user.RoleID,
 		&user.Role,
+		&user.PlanCode,
 		&user.AuthProvider,
 		&discordID,
 		&emailVerifiedAt,
@@ -78,6 +79,9 @@ func scanUser(
 	if user.AuthProvider == "" {
 		user.AuthProvider = "local"
 	}
+	if user.PlanCode == "" {
+		user.PlanCode = models.PlanCodeFree
+	}
 	return nil
 }
 
@@ -88,6 +92,7 @@ const userSelectWithPassword = `
 	u.password,
 	u.role_id,
 	r.name AS role,
+	COALESCE(s.plan_code, 'free') AS plan_code,
 	u.auth_provider,
 	u.discord_id,
 	u.email_verified_at,
@@ -102,6 +107,7 @@ const userSelectPublic = `
 	u.email,
 	u.role_id,
 	r.name AS role,
+	COALESCE(s.plan_code, 'free') AS plan_code,
 	u.auth_provider,
 	u.discord_id,
 	u.email_verified_at,
@@ -113,6 +119,7 @@ const userSelectPublic = `
 const userFromJoin = `
 	FROM users u
 	JOIN roles r ON r.id = u.role_id
+	LEFT JOIN subscriptions s ON s.user_id = u.id
 `
 
 // Create User
@@ -289,6 +296,7 @@ var userSortColumns = map[string]string{
 	"username":          "u.username",
 	"email":             "u.email",
 	"role":              "r.name",
+	"plan_code":         "COALESCE(s.plan_code, 'free')",
 	"auth_provider":     "u.auth_provider",
 	"email_verified_at": "u.email_verified_at",
 	"created_at":        "u.created_at",
