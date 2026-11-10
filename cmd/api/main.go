@@ -93,6 +93,7 @@ func main() {
 		mailer.NewFromEnv(),
 		os.Getenv("FRONTEND_URL"),
 		oauth.NewDiscordClient(oauth.DiscordConfigFromEnv()),
+		oauth.NewGoogleClient(oauth.GoogleConfigFromEnv()),
 		billingRepo,
 	)
 	notificationService := service.NewNotificationService(notificationRepo)
@@ -134,6 +135,7 @@ func main() {
 		auth.POST("/register", authRateLimit, authHandler.Register)
 		auth.POST("/login", authRateLimit, authHandler.Login)
 		auth.POST("/discord", authRateLimit, authHandler.DiscordLogin)
+		auth.POST("/google", authRateLimit, authHandler.GoogleLogin)
 		auth.POST("/refresh", authRateLimit, authHandler.Refresh)
 		auth.POST("/forgot-password", authRateLimit, authHandler.ForgotPassword)
 		auth.POST("/reset-password", authRateLimit, authHandler.ResetPassword)

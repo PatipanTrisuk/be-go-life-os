@@ -34,6 +34,7 @@ func scanUser(
 ) error {
 	var password sql.NullString
 	var discordID sql.NullString
+	var googleID sql.NullString
 	var emailVerifiedAt sql.NullTime
 	var deletedAt sql.NullTime
 
@@ -51,6 +52,7 @@ func scanUser(
 		&user.PlanCode,
 		&user.AuthProvider,
 		&discordID,
+		&googleID,
 		&emailVerifiedAt,
 		&deletedAt,
 		&user.CreatedAt,
@@ -67,6 +69,10 @@ func scanUser(
 	if discordID.Valid {
 		id := discordID.String
 		user.DiscordID = &id
+	}
+	if googleID.Valid {
+		id := googleID.String
+		user.GoogleID = &id
 	}
 	if emailVerifiedAt.Valid {
 		t := emailVerifiedAt.Time
@@ -95,6 +101,7 @@ const userSelectWithPassword = `
 	COALESCE(s.plan_code, 'free') AS plan_code,
 	u.auth_provider,
 	u.discord_id,
+	u.google_id,
 	u.email_verified_at,
 	u.deleted_at,
 	u.created_at,
@@ -110,6 +117,7 @@ const userSelectPublic = `
 	COALESCE(s.plan_code, 'free') AS plan_code,
 	u.auth_provider,
 	u.discord_id,
+	u.google_id,
 	u.email_verified_at,
 	u.deleted_at,
 	u.created_at,
@@ -132,8 +140,8 @@ func (r *UserRepository) Create(
 	}
 
 	query := `
-		INSERT INTO users (username, email, password, role_id, auth_provider, discord_id, email_verified_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO users (username, email, password, role_id, auth_provider, discord_id, google_id, email_verified_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -147,6 +155,11 @@ func (r *UserRepository) Create(
 	var discordID any
 	if user.DiscordID != nil && strings.TrimSpace(*user.DiscordID) != "" {
 		discordID = strings.TrimSpace(*user.DiscordID)
+	}
+
+	var googleID any
+	if user.GoogleID != nil && strings.TrimSpace(*user.GoogleID) != "" {
+		googleID = strings.TrimSpace(*user.GoogleID)
 	}
 
 	var emailVerifiedAt any
@@ -163,6 +176,7 @@ func (r *UserRepository) Create(
 		user.RoleID,
 		user.AuthProvider,
 		discordID,
+		googleID,
 		emailVerifiedAt,
 	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 
@@ -257,6 +271,45 @@ func (r *UserRepository) LinkDiscordID(ctx context.Context, userID, discordID st
 		`,
 		userID,
 		discordID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *UserRepository) FindByGoogleID(
+	ctx context.Context,
+	googleID string,
+) (*models.User, error) {
+	user := &models.User{}
+
+	query := `
+        SELECT ` + userSelectWithPassword + `
+        ` + userFromJoin + `
+        WHERE u.google_id = $1 AND u.deleted_at IS NULL
+    `
+
+	err := scanUser(r.DB.QueryRow(ctx, query, googleID), user, true)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (r *UserRepository) LinkGoogleID(ctx context.Context, userID, googleID string) error {
+	tag, err := r.DB.Exec(
+		ctx,
+		`
+			UPDATE users
+			SET google_id = $2, updated_at = NOW()
+			WHERE id = $1
+		`,
+		userID,
+		googleID,
 	)
 	if err != nil {
 		return err

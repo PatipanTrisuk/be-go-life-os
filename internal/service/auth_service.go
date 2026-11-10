@@ -45,6 +45,9 @@ var (
 	ErrDiscordNotConfigured = oauth.ErrDiscordNotConfigured
 	ErrDiscordEmailMissing  = oauth.ErrDiscordEmailMissing
 	ErrDiscordAuthFailed    = errors.New("discord authentication failed")
+	ErrGoogleNotConfigured  = oauth.ErrGoogleNotConfigured
+	ErrGoogleEmailMissing   = oauth.ErrGoogleEmailMissing
+	ErrGoogleAuthFailed     = errors.New("google authentication failed")
 )
 
 type AuthService struct {
@@ -57,6 +60,7 @@ type AuthService struct {
 	Mailer                AuthMailer
 	FrontendURL           string
 	Discord               *oauth.DiscordClient
+	Google                *oauth.GoogleClient
 	BillingRepo           *repository.BillingRepository
 }
 
@@ -89,6 +93,7 @@ func NewAuthService(
 	mailer AuthMailer,
 	frontendURL string,
 	discord *oauth.DiscordClient,
+	google *oauth.GoogleClient,
 	billingRepo *repository.BillingRepository,
 ) *AuthService {
 	frontendURL = strings.TrimRight(strings.TrimSpace(frontendURL), "/")
@@ -106,6 +111,7 @@ func NewAuthService(
 		Mailer:                mailer,
 		FrontendURL:           frontendURL,
 		Discord:               discord,
+		Google:                google,
 		BillingRepo:           billingRepo,
 	}
 }
@@ -404,10 +410,130 @@ func (s *AuthService) LoginWithDiscord(
 	return issuedAccess, refreshToken, user, nil
 }
 
+func (s *AuthService) LoginWithGoogle(
+	ctx context.Context,
+	code string,
+	redirectURI string,
+	device *DeviceInput,
+) (string, string, *models.User, error) {
+	if s.Google == nil {
+		return "", "", nil, ErrGoogleNotConfigured
+	}
+
+	accessToken, err := s.Google.ExchangeCode(ctx, code, redirectURI)
+	if err != nil {
+		if errors.Is(err, oauth.ErrGoogleNotConfigured) {
+			return "", "", nil, ErrGoogleNotConfigured
+		}
+		return "", "", nil, ErrGoogleAuthFailed
+	}
+
+	googleUser, err := s.Google.FetchUser(ctx, accessToken)
+	if err != nil {
+		switch {
+		case errors.Is(err, oauth.ErrGoogleEmailMissing):
+			return "", "", nil, ErrGoogleEmailMissing
+		case errors.Is(err, oauth.ErrGoogleNotConfigured):
+			return "", "", nil, ErrGoogleNotConfigured
+		default:
+			return "", "", nil, ErrGoogleAuthFailed
+		}
+	}
+
+	email := strings.ToLower(strings.TrimSpace(googleUser.Email))
+	user, err := s.UserRepo.FindByGoogleID(ctx, googleUser.Sub)
+	if errors.Is(err, pgx.ErrNoRows) {
+		user, err = s.UserRepo.FindByEmail(ctx, email)
+		switch {
+		case err == nil:
+			if user.GoogleID == nil || *user.GoogleID == "" {
+				if linkErr := s.UserRepo.LinkGoogleID(ctx, user.ID.String(), googleUser.Sub); linkErr != nil {
+					return "", "", nil, linkErr
+				}
+				id := googleUser.Sub
+				user.GoogleID = &id
+			} else if *user.GoogleID != googleUser.Sub {
+				return "", "", nil, ErrEmailExists
+			}
+			if user.EmailVerifiedAt == nil {
+				now := time.Now()
+				if setErr := s.UserRepo.SetEmailVerified(ctx, user.ID.String(), now); setErr != nil {
+					return "", "", nil, setErr
+				}
+				user.EmailVerifiedAt = &now
+			}
+		case errors.Is(err, pgx.ErrNoRows):
+			username, genErr := s.uniqueUsername(ctx, googleUser.DisplayName())
+			if genErr != nil {
+				return "", "", nil, genErr
+			}
+			googleID := googleUser.Sub
+			now := time.Now()
+			roleID, roleErr := s.UserRepo.FindRoleIDByName(ctx, authz.RoleUser)
+			if roleErr != nil {
+				return "", "", nil, roleErr
+			}
+			user = &models.User{
+				Username:        username,
+				Email:           email,
+				RoleID:          roleID,
+				Role:            authz.RoleUser,
+				AuthProvider:    "google",
+				GoogleID:        &googleID,
+				EmailVerifiedAt: &now,
+			}
+			if createErr := s.UserRepo.Create(ctx, user); createErr != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(createErr, &pgErr) && pgErr.Code == "23505" {
+					switch pgErr.ConstraintName {
+					case "users_email_key":
+						return "", "", nil, ErrEmailExists
+					case "users_username_key":
+						return "", "", nil, ErrUsernameExists
+					case "users_google_id_key":
+						return "", "", nil, ErrGoogleAuthFailed
+					}
+				}
+				return "", "", nil, createErr
+			}
+			if subErr := s.ensureSubscription(ctx, user.ID.String()); subErr != nil {
+				return "", "", nil, subErr
+			}
+		default:
+			return "", "", nil, err
+		}
+	} else if err != nil {
+		return "", "", nil, err
+	}
+
+	issuedAccess, err := s.issueAccessToken(user)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	savedDevice, err := s.upsertDevice(ctx, user.ID.String(), device)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	var deviceID *string
+	if savedDevice != nil {
+		deviceID = &savedDevice.ID
+	}
+
+	refreshToken, err := s.issueRefreshToken(ctx, user.ID.String(), deviceID)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	authz.AttachPermissions(user)
+	return issuedAccess, refreshToken, user, nil
+}
+
 func (s *AuthService) uniqueUsername(ctx context.Context, base string) (string, error) {
 	base = sanitizeUsername(base)
 	if len(base) < 3 {
-		base = "discord"
+		base = "user"
 	}
 	if len(base) > 40 {
 		base = base[:40]

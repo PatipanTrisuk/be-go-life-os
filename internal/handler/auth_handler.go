@@ -67,6 +67,12 @@ type DiscordLoginRequest struct {
 	Device      *DeviceRequest `json:"device"`
 }
 
+type GoogleLoginRequest struct {
+	Code        string         `json:"code" binding:"required,min=1,max=2048"`
+	RedirectURI string         `json:"redirectUri" binding:"required,url,max=512"`
+	Device      *DeviceRequest `json:"device"`
+}
+
 type VerifyEmailRequest struct {
 	Token string `json:"token" binding:"required,min=16,max=128"`
 }
@@ -253,6 +259,66 @@ func (h *AuthHandler) DiscordLogin(c *gin.Context) {
 			response.InternalServerError(c, "common.internal_error")
 		default:
 			log.Printf("discord login failed: %v", err)
+			response.InternalServerError(c, "common.internal_error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": i18n.T(c, "auth.login_success"),
+		"data": gin.H{
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+			"tokenType":    "Bearer",
+			"expiresIn":    900,
+			"user":         user,
+		},
+	})
+}
+
+func (h *AuthHandler) GoogleLogin(c *gin.Context) {
+	var req GoogleLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "auth.invalid_request")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	accessToken, refreshToken, user, err := h.AuthService.LoginWithGoogle(
+		ctx,
+		req.Code,
+		req.RedirectURI,
+		toDeviceInput(c, req.Device),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrGoogleNotConfigured):
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":  "error",
+				"message": i18n.T(c, "auth.google_not_configured"),
+			})
+		case errors.Is(err, service.ErrGoogleEmailMissing):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": i18n.T(c, "auth.google_email_missing"),
+			})
+		case errors.Is(err, service.ErrGoogleAuthFailed):
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  "error",
+				"message": i18n.T(c, "auth.google_failed"),
+			})
+		case errors.Is(err, service.ErrEmailExists):
+			c.JSON(http.StatusConflict, gin.H{
+				"status":  "error",
+				"message": i18n.T(c, "auth.google_email_conflict"),
+			})
+		case errors.Is(err, service.ErrJWTSecretMissing):
+			response.InternalServerError(c, "common.internal_error")
+		default:
+			log.Printf("google login failed: %v", err)
 			response.InternalServerError(c, "common.internal_error")
 		}
 		return

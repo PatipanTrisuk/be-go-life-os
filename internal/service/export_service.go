@@ -211,6 +211,7 @@ func (s *ExportService) process(ctx context.Context, jobID string) {
 		"role",
 		"auth_provider",
 		"discord_id",
+		"google_id",
 		"email_verified_at",
 		"deleted_at",
 		"created_at",
@@ -221,6 +222,10 @@ func (s *ExportService) process(ctx context.Context, jobID string) {
 		discordID := ""
 		if user.DiscordID != nil {
 			discordID = *user.DiscordID
+		}
+		googleID := ""
+		if user.GoogleID != nil {
+			googleID = *user.GoogleID
 		}
 		emailVerified := ""
 		if user.EmailVerifiedAt != nil {
@@ -237,6 +242,7 @@ func (s *ExportService) process(ctx context.Context, jobID string) {
 			user.Role,
 			user.AuthProvider,
 			discordID,
+			googleID,
 			emailVerified,
 			deletedAt,
 			user.CreatedAt.UTC().Format(time.RFC3339),
