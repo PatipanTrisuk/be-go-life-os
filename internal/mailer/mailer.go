@@ -14,30 +14,30 @@ import (
 	"time"
 )
 
-const brevoSendURL = "https://api.brevo.com/v3/smtp/email"
+const resendSendURL = "https://api.resend.com/emails"
 
 type Mailer struct {
-	host        string
-	port        string
-	username    string
-	password    string
-	from        string
-	fromName    string
-	brevoAPIKey string
-	appName     string
-	httpClient  *http.Client
+	host         string
+	port         string
+	username     string
+	password     string
+	from         string
+	fromName     string
+	resendAPIKey string
+	appName      string
+	httpClient   *http.Client
 }
 
 func NewFromEnv() *Mailer {
 	m := &Mailer{
-		host:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		port:        firstNonEmpty(os.Getenv("SMTP_PORT"), "587"),
-		username:    strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		password:    strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
-		from:        firstNonEmpty(os.Getenv("SMTP_FROM"), os.Getenv("BREVO_FROM"), os.Getenv("SMTP_USERNAME"), "noreply@localhost"),
-		fromName:    firstNonEmpty(os.Getenv("SMTP_FROM_NAME"), os.Getenv("APP_NAME"), "LIFE+"),
-		brevoAPIKey: strings.TrimSpace(os.Getenv("BREVO_API_KEY")),
-		appName:     firstNonEmpty(os.Getenv("APP_NAME"), "LIFE+"),
+		host:         strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		port:         firstNonEmpty(os.Getenv("SMTP_PORT"), "587"),
+		username:     strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		password:     strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
+		from:         firstNonEmpty(os.Getenv("SMTP_FROM"), os.Getenv("RESEND_FROM"), "onboarding@resend.dev"),
+		fromName:     firstNonEmpty(os.Getenv("SMTP_FROM_NAME"), os.Getenv("APP_NAME"), "LIFE+"),
+		resendAPIKey: strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		appName:      firstNonEmpty(os.Getenv("APP_NAME"), "LIFE+"),
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 		},
@@ -50,8 +50,8 @@ func NewFromEnv() *Mailer {
 	}
 
 	switch {
-	case m.brevoAPIKey != "":
-		log.Printf("[mailer] Brevo API enabled from=%s name=%s", m.from, m.fromName)
+	case m.resendAPIKey != "":
+		log.Printf("[mailer] Resend API enabled from=%s name=%s", m.from, m.fromName)
 	case m.host != "":
 		log.Printf("[mailer] SMTP enabled host=%s port=%s from=%s", m.host, m.port, m.from)
 	default:
@@ -88,11 +88,11 @@ func (m *Mailer) SendEmailVerification(to string, data EmailVerificationData) er
 }
 
 func (m *Mailer) send(to, subject, textBody, htmlBody string) error {
-	if m.brevoAPIKey != "" {
-		if err := m.sendViaBrevoAPI(to, subject, textBody, htmlBody); err != nil {
+	if m.resendAPIKey != "" {
+		if err := m.sendViaResend(to, subject, textBody, htmlBody); err != nil {
 			return err
 		}
-		log.Printf("[mailer] sent email via Brevo API to=%s subject=%q", to, subject)
+		log.Printf("[mailer] sent email via Resend to=%s subject=%q", to, subject)
 		return nil
 	}
 
@@ -115,55 +115,44 @@ func (m *Mailer) send(to, subject, textBody, htmlBody string) error {
 	return nil
 }
 
-type brevoAddress struct {
-	Email string `json:"email"`
-	Name  string `json:"name,omitempty"`
+type resendSendRequest struct {
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	HTML    string   `json:"html"`
+	Text    string   `json:"text,omitempty"`
 }
 
-type brevoSendRequest struct {
-	Sender      brevoAddress   `json:"sender"`
-	To          []brevoAddress `json:"to"`
-	Subject     string         `json:"subject"`
-	HTMLContent string         `json:"htmlContent"`
-	TextContent string         `json:"textContent,omitempty"`
-}
-
-func (m *Mailer) sendViaBrevoAPI(to, subject, textBody, htmlBody string) error {
-	payload := brevoSendRequest{
-		Sender: brevoAddress{
-			Email: m.from,
-			Name:  m.fromName,
-		},
-		To: []brevoAddress{
-			{Email: to},
-		},
-		Subject:     subject,
-		HTMLContent: htmlBody,
-		TextContent: textBody,
+func (m *Mailer) sendViaResend(to, subject, textBody, htmlBody string) error {
+	payload := resendSendRequest{
+		From:    formatFromHeader(m.fromName, m.from),
+		To:      []string{to},
+		Subject: subject,
+		HTML:    htmlBody,
+		Text:    textBody,
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("brevo encode failed: %w", err)
+		return fmt.Errorf("resend encode failed: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, brevoSendURL, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, resendSendURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("brevo request failed: %w", err)
+		return fmt.Errorf("resend request failed: %w", err)
 	}
-	req.Header.Set("accept", "application/json")
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("api-key", m.brevoAPIKey)
+	req.Header.Set("Authorization", "Bearer "+m.resendAPIKey)
+	req.Header.Set("Content-Type", "application/json")
 
 	res, err := m.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("brevo send failed: %w", err)
+		return fmt.Errorf("resend send failed: %w", err)
 	}
 	defer res.Body.Close()
 
 	resBody, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("brevo send failed: status=%d body=%s", res.StatusCode, strings.TrimSpace(string(resBody)))
+		return fmt.Errorf("resend send failed: status=%d body=%s", res.StatusCode, strings.TrimSpace(string(resBody)))
 	}
 
 	return nil
@@ -214,7 +203,11 @@ func formatFromHeader(name, email string) string {
 	if name == "" {
 		return email
 	}
-	return fmt.Sprintf("%s <%s>", mime.QEncoding.Encode("UTF-8", name), email)
+	// Resend accepts "Name <email>" as plain UTF-8; SMTP still needs encoded display names.
+	if strings.ContainsAny(name, "<>\"\\") {
+		return fmt.Sprintf("%s <%s>", mime.QEncoding.Encode("UTF-8", name), email)
+	}
+	return fmt.Sprintf("%s <%s>", name, email)
 }
 
 func firstNonEmpty(values ...string) string {
